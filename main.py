@@ -193,10 +193,13 @@ def caption(p, link):
     bm = lang == "ms"
     title = " ".join(p["productName"].split())[:150]
     low, high, pct = (number(p.get(k)) for k in ("priceMin", "priceMax", "priceDiscountRate"))
-    lines = [hook(title, bm), title, f"★ {p['ratingStar']}  ·  {p['sales']} " + ("terjual" if bm else "已售")]
-    lines.append(("Harga dari " if bm else "现价低至 ") + f"RM{low:.2f}")
+    lines = [hook(title, bm), title]
+    if p.get("ratingStar") and p.get("sales") is not None:
+        lines.append(f"★ {p['ratingStar']}  ·  {p['sales']} " + ("terjual" if bm else "已售"))
+    if low > 0:
+        lines.append(("Harga dari " if bm else "现价低至 ") + f"RM{low:.2f}")
     # 折扣率可能四舍五入。仅单一售价时反推，并在两个金额旁明确标注估算。
-    if low == high and 0 < pct < 100:
+    if low > 0 and low == high and 0 < pct < 100:
         original = low / (1 - pct / 100)
         lines.append((f"Anggaran asal RM{original:.2f} · jimat kira-kira RM{original-low:.2f}"
                       if bm else f"估算原价 RM{original:.2f} · 约省 RM{original-low:.2f}"))
@@ -210,16 +213,39 @@ def caption(p, link):
     return result
 
 
+def queued_product(state):
+    """按清单顺序选择。短链原样发送，保留 Shopee 生成链接时的归因。"""
+    rows = load(Path("products.json"))
+    if not isinstance(rows, list):
+        raise ValueError("products.json 必须是数组")
+    for index, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            raise ValueError(f"清单第 {index} 行需要商品对象")
+        item = str(row.get("itemId", ""))
+        name = row.get("productName")
+        if not re.fullmatch(r"[1-9][0-9]*", item) or not isinstance(name, str) or not name.strip():
+            raise ValueError(f"清单第 {index} 行缺少有效 itemId 或 productName")
+        link = row.get("affiliateLink")
+        if not https(link) or urlsplit(link).hostname not in {"s.shopee.com.my", "shope.ee", "shopee.com.my"}:
+            raise ValueError(f"清单第 {index} 行需要 Shopee MY 后台生成的推广链接")
+        if not https(row.get("imageUrl")):
+            raise ValueError(f"清单第 {index} 行需要 HTTPS 商品主图")
+        if item not in state:
+            return row
+    return None
+
+
 def prepare():
-    required("TELEGRAM_BOT_TOKEN")
-    required("TELEGRAM_CHAT_ID")
     PACKET.unlink(missing_ok=True)
     now = int(time.time())
     state = history(now)
-    p = choose(state, now)
+    api_mode = bool(env("SHOPEE_APP_ID") and env("SHOPEE_SECRET"))
+    p = choose(state, now) if api_mode else queued_product(state)
     if p is None:
         print("没有符合门槛且可推送的商品，本次发送 0 条。")
         return False
+    required("TELEGRAM_BOT_TOKEN")
+    required("TELEGRAM_CHAT_ID")
     local = datetime.fromtimestamp(now, MY)
     cron = env("TRIGGER_CRON")
     slot = CRONS[cron] if cron else "manual"
@@ -231,16 +257,20 @@ def prepare():
     else:
         scheduled = local
     tags = [scheduled.strftime("%Y%m%d"), slot, "telegram"]
-    link = gql(SHORT, {"url": p["productLink"], "tags": tags})["generateShortLink"]["shortLink"]
+    link = (gql(SHORT, {"url": p["productLink"], "tags": tags})["generateShortLink"]["shortLink"]
+            if api_mode else p["affiliateLink"])
     if not https(link):
         raise ValueError("Shopee 未返回有效专属短链")
     item = str(p["itemId"])
     packet = {"item": item, "photo": p["imageUrl"], "caption": caption(p, link)}
     stamp = int(time.time())
-    state[item] = {"ts": stamp, "status": "pending", "subIds": tags}
+    state[item] = {"ts": stamp, "status": "pending", "slot": slot,
+                   "source": "api" if api_mode else "queue"}
+    if api_mode:
+        state[item]["subIds"] = tags
     dump(PACKET, packet)
     dump(STATE, state)
-    print(f"已预留商品 {item}，SubIDs {' / '.join(tags)}")
+    print(f"已预留商品 {item}，时段 {slot}，来源 {state[item]['source']}")
     return True
 
 

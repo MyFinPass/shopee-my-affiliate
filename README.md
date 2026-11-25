@@ -1,4 +1,11 @@
 # Shopee MY → Telegram · 约 5 分钟上线
+## 无 Open API 权限时使用商品清单
+
+在默认分支编辑 `products.json`。初始值为 `[]`。每件商品填写四个字段：`itemId`（商品数字 ID）、`productName`（商品名称）、`imageUrl`（HTTPS 主图地址）和 `affiliateLink`（当前联盟账号从 Shopee 后台生成的专属链接）。保存为 JSON 对象数组。价格可选，以 `priceMin` 填入已核实的 RM 起价。
+
+只配置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID 即可分发清单商品；Gemini 可选。每次从头选第一件不在七天防重窗口内的商品。请自行维护清单中的在售状态及优惠信息。无可发商品时正常退出。清单中的短链原样发送，仓库记录实际分发时段；如需 Shopee 端的渠道归因，请在生成短链时配置对应 Sub ID。此仓库公开，请只填写可公开的商品资料。
+
+以下 Open API 章节适用于已有 App ID 与 Secret 的账号。
 开始前准备好已开通马来西亚 Affiliate Open API 的 App ID 和 Secret。审批、GitHub 排队与首次安装时间另计。已有 Shopee 联盟账号可先登录 [MY Affiliate 后台](https://affiliate.shopee.com.my/dashboard)，查看 Open API / API Access 入口和应用凭证。若未获权限，先在后台申请或联系联盟支持。Seller Centre 的 Partner Key 和普通推广短链不能代替这两项。
 
 ## 1　准备 Telegram 收件处
